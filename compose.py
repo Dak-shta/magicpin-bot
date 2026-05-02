@@ -1,83 +1,125 @@
 import requests
+import os
 import json
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "llama3"
+# -------------------------------
+# GROQ CONFIG
+# -------------------------------
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+MODEL = "llama3-8b-8192"
 
 
 # -------------------------------
-# STRATEGY DECISION
+# GROQ CALL (SAFE)
+# -------------------------------
+def call_groq(prompt):
+    try:
+        if not GROQ_API_KEY:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Vera, a strict conversion assistant. "
+                        "Return ONLY valid JSON with keys: message, cta, send_as, suppression_key, rationale."
+                    )
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 120
+        }
+
+        res = requests.post(GROQ_URL, headers=headers, json=payload, timeout=3)
+
+        if res.status_code != 200:
+            return None
+
+        data = res.json()
+
+        return data.get("choices", [{}])[0].get("message", {}).get("content")
+
+    except Exception:
+        return None
+
+
+# -------------------------------
+# SAFE JSON PARSER
+# -------------------------------
+def extract_json(text):
+    try:
+        if not text:
+            return None
+
+        start = text.find("{")
+        end = text.rfind("}")
+
+        if start == -1 or end == -1:
+            return None
+
+        return json.loads(text[start:end+1])
+
+    except Exception:
+        return None
+
+
+# -------------------------------
+# STRATEGY ENGINE
 # -------------------------------
 def decide_strategy(trigger, merchant):
     kind = (trigger or {}).get("kind", "")
-    signals = (merchant or {}).get("signals", [])
+    signals = " ".join((merchant or {}).get("signals", []))
 
-    signals_str = " ".join(signals)
-
-    if "ctr_below_peer_median" in signals_str or "perf_dip" in kind:
+    if "ctr_below_peer_median" in signals or "perf_dip" in kind:
         return "performance_fix"
 
-    if "stale_posts" in signals_str:
+    if "stale_posts" in signals:
         return "content_refresh"
 
-    if "renewal_due_soon" in signals_str:
+    if "renewal_due_soon" in signals:
         return "subscription_renewal"
 
-    if "dormant" in signals_str:
+    if "dormant" in signals:
         return "re_engagement"
 
-    if "high_engagement" in signals_str or "spike" in kind:
+    if "high_engagement" in signals or "spike" in kind:
         return "growth_push"
 
     return "generic"
 
 
 # -------------------------------
-# CATEGORY-SPECIFIC ACTION
+# CATEGORY INTELLIGENCE
 # -------------------------------
 def category_action(category_name):
-    category_name = category_name.lower()
+    category_name = (category_name or "").lower()
 
     if "dentist" in category_name:
-        return "increase bookings by highlighting top treatments, adding patient reviews, and improving trust signals"
-
+        return "increase bookings via trust signals"
     if "gym" in category_name:
-        return "convert visitors into paid members using free trial offers and limited-time discounts"
-
+        return "convert visits into memberships"
     if "restaurant" in category_name:
-        return "boost orders by promoting best-selling dishes, combo meals, and peak-hour offers"
-
+        return "increase orders via combos"
     if "salon" in category_name:
-        return "increase bookings by showcasing trending services, before-after results, and service packages"
-
+        return "boost bookings via transformations"
     if "pharmacy" in category_name:
-        return "drive more orders by highlighting fast delivery, medicine availability, and urgent needs"
+        return "increase urgent orders via availability"
 
-    return "improve conversions by optimizing visibility and customer engagement"
+    return "improve conversions via optimization"
 
-# -------------------------------
-# FALLBACK (SAFE)
-# -------------------------------
-def fallback():
-    return {
-        "message": "I can improve your listing performance using recent data and increase conversions quickly. Want me to do it?",
-        "cta": "YES",
-        "send_as": "vera",
-        "suppression_key": "fallback",
-        "rationale": "Safe fallback"
-    }
-
-def build_response(message, strategy, merchant_id):
-    return {
-        "message": message,
-        "cta": "YES",
-        "send_as": "vera",
-        "suppression_key": f"{strategy}_{merchant_id}",
-        "rationale": f"{strategy} with category-specific conversion optimization"
-    }
 
 def get_goal(category_name):
-    category_name = category_name.lower()
+    category_name = (category_name or "").lower()
 
     if "dentist" in category_name:
         return "appointments"
@@ -86,7 +128,7 @@ def get_goal(category_name):
     if "restaurant" in category_name:
         return "orders"
     if "salon" in category_name:
-        return "appointments"
+        return "bookings"
     if "pharmacy" in category_name:
         return "repeat orders"
 
@@ -94,35 +136,58 @@ def get_goal(category_name):
 
 
 # -------------------------------
-# MAIN COMPOSE FUNCTION
+# RESPONSE BUILDER
+# -------------------------------
+def build_response(message, strategy, merchant_id):
+    return {
+        "message": message,
+        "cta": "YES",
+        "send_as": "vera",
+        "suppression_key": f"{strategy}_{merchant_id}",
+        "rationale": f"{strategy} optimized message"
+    }
+
+
+# -------------------------------
+# FALLBACK
+# -------------------------------
+def fallback(strategy="generic", merchant_id="unknown"):
+    return {
+        "message": "I can improve your listing performance using insights and increase conversions quickly. Want me to do it?",
+        "cta": "YES",
+        "send_as": "vera",
+        "suppression_key": f"{strategy}_{merchant_id}",
+        "rationale": "safe fallback"
+    }
+
+
+# -------------------------------
+# MAIN FUNCTION
 # -------------------------------
 def compose(category, merchant, trigger, customer=None):
     try:
-        # -------------------------------
-        # 🚀 FAST RULE SHORTCUTS
-        # -------------------------------
 
-        # Auto-reply detection
+        # -----------------------
+        # FAST RULES
+        # -----------------------
         if customer is None and (trigger or {}).get("kind") == "":
             return {"action": "end"}
 
-        # Hostile detection
-        if customer and any(word in str(customer).lower() for word in ["spam", "stop", "useless"]):
+        if customer and any(w in str(customer).lower() for w in ["spam", "stop", "useless"]):
             return {"action": "end"}
 
-        # Intent commit
         if customer and "do it" in str(customer).lower():
             return {
                 "message": "Great — I’ll set this up and share results shortly. Proceed?",
                 "cta": "YES",
                 "send_as": "vera",
                 "suppression_key": "intent_action",
-                "rationale": "User committed"
+                "rationale": "user intent commit"
             }
 
-        # -------------------------------
-        # SAFE INPUTS
-        # -------------------------------
+        # -----------------------
+        # INPUT SAFE
+        # -----------------------
         category = category or {}
         merchant = merchant or {}
         trigger = trigger or {}
@@ -142,61 +207,73 @@ def compose(category, merchant, trigger, customer=None):
 
         merchant_id = merchant.get("merchant_id", "unknown")
 
-        category_name = (category.get("name") or "")
+        category_name = category.get("name", "")
         goal = get_goal(category_name)
-        action_line = category_action(category_name)
+        action = category_action(category_name)
 
-        # -------------------------------
-        # 🎯 STRATEGY-BASED RESPONSES
-        # -------------------------------
+        # -----------------------
+        # STRATEGY RESPONSES
+        # -----------------------
+        def msg(text):
+            return build_response(text, strategy, merchant_id)
 
         if strategy == "performance_fix":
-            msg = (
-        f"{owner}, {business} in {locality} is getting {views} views but only {ctr}% CTR and {calls} calls.\n"
-        f"You're missing high-intent {goal} — I can increase {goal} by 20–30% this week by optimizing your listing. Want me to fix this today?"
-    )
-            return build_response(msg, strategy, merchant_id)
-        
+            return msg(
+                f"{owner}, {business} has {views} views but low CTR ({ctr}%).\n"
+                f"You’re losing {goal}. I can {action} and improve conversions fast. Want me to fix it?"
+            )
 
         if strategy == "growth_push":
-            msg = (
-        f"{business} in {locality} is getting strong demand ({views} views).\n"
-        f"I can convert this into 20–30% more {goal} using targeted optimization. Want me to scale this now?"
-    )
-            return build_response(msg, strategy, merchant_id)
-        
+            return msg(
+                f"{business} is getting strong demand ({views} views).\n"
+                f"I can {action} and convert into more {goal}. Want me to scale?"
+            )
+
         if strategy == "content_refresh":
-            msg = (
-    f"Your listing in {locality} has CTR {ctr}% — content isn’t converting.\n"
-    f"I can refresh it and boost {goal} by 20%+. Want me to update it now?"
-)
-    
-            return build_response(msg, strategy, merchant_id)
-       
+            return msg(
+                f"CTR is {ctr}% — listing underperforming.\n"
+                f"I can {action} and improve {goal}. Want update?"
+            )
+
         if strategy == "re_engagement":
-            msg = (
-    f"{owner}, {business} in {locality} is inactive — you're losing potential {goal} daily.\n"
-    f"I can reactivate your listing and recover traffic fast. Want me to restart this today?"
-)
-            return build_response(msg, strategy, merchant_id)
+            return msg(
+                f"{owner}, {business} is inactive — losing {goal}.\n"
+                f"I can {action} and bring customers back. Want restart?"
+            )
 
-       
         if strategy == "subscription_renewal":
-            msg = (
-    f"{owner}, your plan is ending while {business} still gets {views} views.\n"
-    f"You risk losing {goal} — I can secure and grow them before expiry. Want me to act now?"
-)
-            return build_response(msg, strategy, merchant_id)
+            return msg(
+                f"{owner}, plan ending while traffic exists ({views}).\n"
+                f"I can {action} and protect {goal}. Want to secure?"
+            )
 
-        # -------------------------------
-        # GENERIC (still strong)
-        # -------------------------------
-        msg = (
-    f"{owner}, {business} in {locality} is getting {views} views with {ctr}% CTR.\n"
-    f"I can increase {goal} by 20%+ using targeted optimization. Want me to do it?"
-)
-        return build_response(msg, strategy, merchant_id)
+        # -----------------------
+        # GROQ FALLBACK (SMART)
+        # -----------------------
+        prompt = f"""
+Business: {business}
+Location: {locality}
+CTR: {ctr}%
+Views: {views}
+Calls: {calls}
+Goal: {goal}
+Strategy: {strategy}
 
-    except Exception as e:
-        print("ERROR:", e)
+Write a 2-line high-conversion message.
+Include urgency + CTA.
+Return JSON only.
+"""
+
+        raw = call_groq(prompt)
+        parsed = extract_json(raw)
+
+        if parsed and isinstance(parsed, dict) and "message" in parsed:
+            parsed["cta"] = "YES"
+            parsed["send_as"] = "vera"
+            parsed["suppression_key"] = f"{strategy}_{merchant_id}"
+            return parsed
+
+        return fallback(strategy, merchant_id)
+
+    except Exception:
         return fallback()

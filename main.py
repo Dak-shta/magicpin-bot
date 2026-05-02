@@ -78,7 +78,7 @@ async def tick(req: Request):
 
         result = compose(category, merchant, trigger)
 
-        # Handle END safely
+        # Skip END actions safely
         if result.get("action") == "end":
             continue
 
@@ -97,27 +97,20 @@ async def tick(req: Request):
 def root():
     return {"message": "Vera Bot is running 🚀"}
 
-
 @app.post("/v1/reply")
 async def reply(req: Request):
     data = await req.json()
     msg = data.get("message", "")
 
-    # --------------------------
     # 1. Hostile → END
-    # --------------------------
     if is_hostile(msg):
         return {"action": "end"}
 
-    # --------------------------
     # 2. Auto-reply → END
-    # --------------------------
     if is_auto_reply(msg):
         return {"action": "end"}
 
-    # --------------------------
-    # 3. Positive intent → ACTION mode
-    # --------------------------
+    # 3. Positive intent → ACTION
     if is_positive_intent(msg):
         return {
             "action": "send",
@@ -126,9 +119,7 @@ async def reply(req: Request):
             "send_as": "vera"
         }
 
-    # --------------------------
     # 4. Default → compose
-    # --------------------------
     merchant_id = data.get("merchant_id")
 
     merchant = CONTEXT.get(f"merchant:{merchant_id}", {})

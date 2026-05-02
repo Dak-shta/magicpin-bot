@@ -48,7 +48,7 @@ def healthz():
 def metadata():
     return {
         "team_name": "Team Vera",
-        "model": "ollama-llama3"
+        "model": "rule-based-optimized-45+"
     }
 
 
@@ -78,16 +78,24 @@ async def tick(req: Request):
 
         result = compose(category, merchant, trigger)
 
+        # Handle END safely
+        if result.get("action") == "end":
+            continue
+
         actions.append({
             "trigger_id": tid,
             "merchant_id": merchant_id,
             "action": "send",
-            "body": result["message"],
-            "cta": result["cta"],
-            "send_as": result["send_as"]
+            "body": result.get("message", ""),
+            "cta": result.get("cta", "YES"),
+            "send_as": result.get("send_as", "vera")
         })
 
     return {"actions": actions}
+
+@app.get("/")
+def root():
+    return {"message": "Vera Bot is running 🚀"}
 
 
 @app.post("/v1/reply")
@@ -99,17 +107,13 @@ async def reply(req: Request):
     # 1. Hostile → END
     # --------------------------
     if is_hostile(msg):
-        return {
-            "action": "end"
-        }
+        return {"action": "end"}
 
     # --------------------------
     # 2. Auto-reply → END
     # --------------------------
     if is_auto_reply(msg):
-        return {
-            "action": "end"
-        }
+        return {"action": "end"}
 
     # --------------------------
     # 3. Positive intent → ACTION mode
@@ -123,14 +127,13 @@ async def reply(req: Request):
         }
 
     # --------------------------
-    # 4. Default → normal compose
+    # 4. Default → compose
     # --------------------------
     merchant_id = data.get("merchant_id")
 
     merchant = CONTEXT.get(f"merchant:{merchant_id}", {})
     category = CONTEXT.get(f"category:{merchant.get('category_slug')}", {})
 
-    # fallback trigger
     trigger = {
         "kind": "conversation",
         "merchant_id": merchant_id,
@@ -139,18 +142,12 @@ async def reply(req: Request):
 
     result = compose(category, merchant, trigger)
 
-    if "action" in result:
-        return result
-
-    return {
-    "action": "send",
-    "body": result.get("message", ""),
-    "cta": result.get("cta", "YES")
-}
+    if result.get("action") == "end":
+        return {"action": "end"}
 
     return {
         "action": "send",
-        "body": result["message"],
-        "cta": result["cta"],
-        "send_as": result["send_as"]
+        "body": result.get("message", ""),
+        "cta": result.get("cta", "YES"),
+        "send_as": result.get("send_as", "vera")
     }
